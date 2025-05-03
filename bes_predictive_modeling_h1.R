@@ -83,84 +83,78 @@ missing_cells <- is.na(data_cleaned)
 which(missing_cells, arr.ind = TRUE)
 
 # Found that it's just interview date so removing that variable
+
+cols_to_remove <- c("a01", "k04", "Constit_Code", "Constit_Name", 
+                    "LA_UA_Code", "LA_UA_Name", "interviewer")
+
 data_cleaned <- data_cleaned %>%
-  select(-Interview_Date)
+  select(-all_of(cols_to_remove))
+
+
+
+
 
 # Check if there are any remaining missing values
 sum(is.na(data_cleaned))
 
+
+
+
 # -------- Model building
-# too many categories in the predictors for random forest 
-
 # Load necessary libraries
-library(rpart)
-library(rpart.plot)
+library(glmnet)
 library(caret)
+library(dplyr)
+library(tibble)
 
-# 1. Split the data into 80% training and 20% test set
-set.seed(123)  # For reproducibility
-train_index <- createDataPartition(data_cleaned$h01_class, p = 0.8, list = FALSE)
-train_set <- data_cleaned[train_index, ]
-test_set <- data_cleaned[-train_index, ]
-
-# 3. Train a decision tree model
-tree_model <- rpart(h01_class ~ ., data = train_set, method = "class")
-
-# 4. Make predictions on the test set
-test_predictions <- predict(tree_model, test_set, type = "class")
-
-# 5. Evaluate model performance
-confusion_matrix <- table(test_set$h01_class, test_predictions)
-print("Confusion Matrix:")
-print(confusion_matrix)
-
-# Accuracy
-accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
-print(paste("Accuracy: ", round(accuracy, 4)))
-
-# F1 score (for binary classification)
-precision <- confusion_matrix[2, 2] / (confusion_matrix[2, 2] + confusion_matrix[1, 2])
-recall <- confusion_matrix[2, 2] / (confusion_matrix[2, 2] + confusion_matrix[2, 1])
-f1_score <- 2 * (precision * recall) / (precision + recall)
-print(paste("F1 Score: ", round(f1_score, 4)))
-
-
-
-
-library(caret)
-library(rpart)
-library(rpart.plot)
-
-# Step 1: Bin the continuous h01 into categories
-# (e.g., Low: 1–3, Medium: 4–7, High: 8–10)
-data_cleaned$h01_class <- cut(data_cleaned$h01,
-                              breaks = c(-Inf, 3, 7, Inf),
-                              labels = c("Low", "Medium", "High"),
-                              right = TRUE)
-
-# Step 2: Train-test split
+# Set seed for reproducibility
 set.seed(123)
-train_index <- createDataPartition(data_cleaned$h01_class, p = 0.8, list = FALSE)
-train_set <- data_cleaned[train_index, ]
-test_set <- data_cleaned[-train_index, ]
 
-# Step 3: Randomly select 20 predictors
-set.seed(123)
-predictors <- setdiff(names(train_set), c("h01", "h01_class"))  # exclude target
-sampled_cols <- sample(predictors, 20)
+# Split data into training and testing (80/20)
+train_index <- createDataPartition(data_cleaned$h01, p = 0.8, list = FALSE)
+train_data <- data_cleaned[train_index, ]
+test_data <- data_cleaned[-train_index, ]
 
-# Step 4: Subset to sampled predictors + target
-small_train <- train_set[, c("h01_class", sampled_cols)]
-small_test <- test_set[, c("h01_class", sampled_cols)]
+# Convert data to model.matrix format (Lasso requires numeric matrix input)
+x_train <- model.matrix(h01 ~ ., data = train_data)[, -1]  # Remove intercept
+y_train <- train_data$h01
 
-# Step 5: Train decision tree
-tree_model <- rpart(h01_class ~ ., data = small_train, method = "class")
+x_test <- model.matrix(h01 ~ ., data = test_data)[, -1]
+y_test <- test_data$h01
 
-# Optional: Visualize
-rpart.plot(tree_model)
+# Fit Lasso with cross-validation to find optimal lambda
+cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1, standardize = TRUE)
 
-# Step 6: Predict
-test_predictions <- predict(tree_model, small_test, type = "class")
+# Get best lambda
+best_lambda <- cv_lasso$lambda.min
+cat("Best lambda:", best_lambda, "\n")
 
-# Step 7: Evaluate
-confusionMatrix(test_predictions, small_test$h01_class)
+# Get coefficients of the selected model
+lasso_coef <- coef(cv_lasso, s = best_lambda)
+selected_features <- rownames(lasso_coef)[lasso_coef[, 1] != 0]
+selected_features <- selected_features[!selected_features %in% "(Intercept)"]
+cat("Selected features:\n")
+print(selected_features)
+
+# Ensure only the columns that exist in train_data are included in the model
+selected_features <- selected_features[selected_features %in% colnames(train_data)]
+
+# Subset the original training/testing data to selected features
+train_selected <- train_data[, c("h01", selected_features)]
+test_selected <- test_data[, c("h01", selected_features)]
+
+# Train linear model on selected features
+lm_model <- lm(h01 ~ ., data = train_selected)
+
+# Predict on test set
+predictions <- predict(lm_model, newdata = test_selected)
+
+# Evaluate performance
+rmse_val <- RMSE(predictions, test_selected$h01)
+mae_val <- MAE(predictions, test_selected$h01)
+r2_val <- R2(predictions, test_selected$h01)
+
+cat("RMSE:", round(rmse_val, 3), "\n")
+cat("MAE:", round(mae_val, 3), "\n")
+cat("R-squared:", round(r2_val, 3), "\n")
+
