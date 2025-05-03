@@ -102,59 +102,34 @@ sum(is.na(data_cleaned))
 
 # -------- Model building
 # Load necessary libraries
-library(glmnet)
+library(randomForest)
 library(caret)
 library(dplyr)
-library(tibble)
 
 # Set seed for reproducibility
 set.seed(123)
 
-# Split data into training and testing (80/20)
+# Split data into training and testing sets (80% training, 20% testing)
 train_index <- createDataPartition(data_cleaned$h01, p = 0.8, list = FALSE)
 train_data <- data_cleaned[train_index, ]
 test_data <- data_cleaned[-train_index, ]
 
-# Convert data to model.matrix format (Lasso requires numeric matrix input)
-x_train <- model.matrix(h01 ~ ., data = train_data)[, -1]  # Remove intercept
-y_train <- train_data$h01
+# Train the random forest regression model
+rf_model <- randomForest(h01 ~ ., data = train_data, ntree = 100, importance = TRUE)
 
-x_test <- model.matrix(h01 ~ ., data = test_data)[, -1]
-y_test <- test_data$h01
+# Predict on the test set
+rf_predictions <- predict(rf_model, newdata = test_data)
 
-# Fit Lasso with cross-validation to find optimal lambda
-cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1, standardize = TRUE)
+# Evaluate the performance
+rmse_val <- RMSE(rf_predictions, test_data$h01)
+mae_val <- MAE(rf_predictions, test_data$h01)
+r2_val <- R2(rf_predictions, test_data$h01)
 
-# Get best lambda
-best_lambda <- cv_lasso$lambda.min
-cat("Best lambda:", best_lambda, "\n")
-
-# Get coefficients of the selected model
-lasso_coef <- coef(cv_lasso, s = best_lambda)
-selected_features <- rownames(lasso_coef)[lasso_coef[, 1] != 0]
-selected_features <- selected_features[!selected_features %in% "(Intercept)"]
-cat("Selected features:\n")
-print(selected_features)
-
-# Ensure only the columns that exist in train_data are included in the model
-selected_features <- selected_features[selected_features %in% colnames(train_data)]
-
-# Subset the original training/testing data to selected features
-train_selected <- train_data[, c("h01", selected_features)]
-test_selected <- test_data[, c("h01", selected_features)]
-
-# Train linear model on selected features
-lm_model <- lm(h01 ~ ., data = train_selected)
-
-# Predict on test set
-predictions <- predict(lm_model, newdata = test_selected)
-
-# Evaluate performance
-rmse_val <- RMSE(predictions, test_selected$h01)
-mae_val <- MAE(predictions, test_selected$h01)
-r2_val <- R2(predictions, test_selected$h01)
-
+# Print performance metrics
 cat("RMSE:", round(rmse_val, 3), "\n")
 cat("MAE:", round(mae_val, 3), "\n")
 cat("R-squared:", round(r2_val, 3), "\n")
 
+# Feature importance plot
+importance(rf_model)
+varImpPlot(rf_model)
