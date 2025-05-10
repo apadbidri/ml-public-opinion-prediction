@@ -1,0 +1,242 @@
+---
+title: 'MY474 Summative Assignment #2'
+author: '43182'
+date: "WT 2025"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r data_preprocessing, include=FALSE}
+# ====== Data Preprocessing ======
+library(haven)
+library(caret)
+library(dplyr)
+
+data <- read_dta("2019_data.dta")
+
+# View data
+summary(data) # or str(data)
+sum(is.na(data))
+
+# Percent missing per column
+missing_percent <- colSums(is.na(data)) / nrow(data) * 100
+sort(missing_percent, decreasing = TRUE)
+
+# Remove columns with more than 80% missingness
+threshold <- 0.60
+data_cleaned <- data[, colMeans(is.na(data)) <= threshold]
+
+# Calculate percent of missingness per row
+row_missingness <- rowMeans(is.na(data_cleaned)) * 100
+summary(row_missingness)
+
+# Filter rows where missingness is 50% or less
+data_cleaned <- data_cleaned[row_missingness <= 50, ]
+
+#Convert coded unanswered i.e. -1 or -2 to NA
+data_cleaned[data_cleaned < 0] <- NA
+
+sum(is.na(data_cleaned))
+
+#View column of interest
+summary(data_cleaned$h01)
+sum(is.na(data_cleaned$h01))
+
+# Remove rows where h01 is missing
+data_cleaned <- data_cleaned[!is.na(data_cleaned$h01), ]
+# Convert factor levels to numeric (careful: as.numeric() on a factor gives level index, not the label!)
+data_cleaned$h01 <- as.numeric(as.character(data_cleaned$h01))
+
+str(data_cleaned$h01)
+summary(data_cleaned$h01)
+
+# Convert char columns to factors
+# Convert character columns to factors
+char_cols <- names(data_cleaned)[sapply(data_cleaned, is.character)]
+data_cleaned[char_cols] <- lapply(data_cleaned[char_cols], as.factor)
+
+# Remove predictors with zero variance
+nzv <- nearZeroVar(data_cleaned, saveMetrics = TRUE)
+data_cleaned <- data_cleaned[, !nzv$zeroVar]
+
+# Tried to apply KNN but seems like cannot find enough neighbours 
+
+# So use median for continuous and mode for categorical
+# Function to calculate the mode (most frequent value) of a vector
+get_mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# Separate columns by type
+numeric_cols <- sapply(data_cleaned, is.numeric)
+factor_cols <- sapply(data_cleaned, is.factor)
+
+# For numeric columns, replace NAs with the median
+data_cleaned[numeric_cols] <- lapply(data_cleaned[numeric_cols], function(x) {
+  if (any(is.na(x))) {
+    x[is.na(x)] <- median(x, na.rm = TRUE)
+  }
+  return(x)
+})
+
+# For factor columns, replace NAs with the mode
+data_cleaned[factor_cols] <- lapply(data_cleaned[factor_cols], function(x) {
+  if (any(is.na(x))) {
+    mode_value <- get_mode(x[!is.na(x)])
+    x[is.na(x)] <- mode_value
+  }
+  return(x)
+})
+
+# Check if there are any remaining missing values
+sum(is.na(data_cleaned))
+
+missing_cells <- is.na(data_cleaned)
+
+# View the rows and columns where the missing values are
+which(missing_cells, arr.ind = TRUE)
+
+# Found that it's just interview date so removing that variable
+
+cols_to_remove <- c("a01", "k04", "Constit_Code", "Constit_Name", 
+                    "LA_UA_Code", "LA_UA_Name", "interviewer", "Interview_Date", "Stratumlabel", "Stratumlabel2")
+
+data_cleaned <- data_cleaned %>%
+  select(-all_of(cols_to_remove))
+
+
+# Check if there are any remaining missing values
+sum(is.na(data_cleaned))
+
+# Check the distribution of the target variable (h01)
+table(data_cleaned$h01)
+# Convert target to factor
+data_cleaned$h01 <- as.factor(data_cleaned$h01)
+data_cleaned_filtered <- data_cleaned[data_cleaned$h01 != 0, ]
+
+
+sum(sapply(data_cleaned, is.numeric))
+
+
+```
+
+```{r rf_model, include=FALSE}
+
+```
+
+## Predicting Political Preference from Survey Data: 
+  * **Context:** Survey fatigure and low response rates worsening post-COVID
+    * Dropping low-value items could improve participation and data quality
+  * **Key Question:** *Can we predict certain preferences modelled using other survey responses*
+  * **Case Example:** h01 - environmental vs economy prioritisation from the BES 2019
+```{r h01_distribution, echo=FALSE, include=TRUE, warning=FALSE, fig.height=4, fig.width=7}
+library(ggplot2)
+
+# Ensure h01 is a factor with ordered levels (optional but improves display)
+data_cleaned$h01 <- factor(data_cleaned$h01, levels = sort(unique(data_cleaned$h01)))
+
+# Create plot object
+p <- ggplot(data_cleaned_filtered, aes(x = h01)) +
+  geom_bar(fill = "darkslategray4", color = "white", linewidth = 1) +
+  labs(
+    title = "Class Distribution of H01 (Environment vs Economy)",
+    x = "Preference (1 = Environment, 10 = Economy)",
+    y = "Number of Respondents"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5)
+  )
+
+# Print it explicitly
+print(p)
+```
+
+## Modelling Strategy
+```{r model_flowchart, echo=FALSE, include=TRUE}
+library(DiagrammeR)
+
+grViz("
+digraph flowchart {
+  graph [layout = dot, rankdir = TB, fontsize = 12]
+
+  # Shared root node
+  node [shape = box, style = filled, fontcolor = black, color = gray90]
+  A [label = 'Prediction model']
+
+  # Multi-class path
+  node [shape = box, style = filled, fillcolor = lightblue, fontcolor = black]
+  B1 [label = 'Multi-class classification (11 levels)']
+  B2 [label = 'Lasso feature selection\n→ 105 features']
+  B3 [label = 'Random Forest with class weights +\nhyperparameter tuning']
+  B4 [label = 'Low accuracy (~30%)\nPoor prediction of minority preferences']
+
+  # Binary path
+  node [shape = box, style = filled, fillcolor = lightgreen, fontcolor = white]
+  C1 [label = 'Binary classification\n(Env: 1–5 vs Econ: 6–10)']
+  C2 [label = 'SMOTE to balance classes']
+  C3 [label = 'Logistic regression model']
+  C4 [label = 'Improved accuracy (~50%)\nStill moderate performance']
+
+  # Edges
+  A -> B1
+  B1 -> B2
+  B2 -> B3
+  B3 -> B4
+
+  A -> C1
+  C1 -> C2
+  C2 -> C3
+  C3 -> C4
+}
+")
+```
+
+## Model Performance Evaluation 
+  * Substantive nuance lost in both approaches 
+    * Multi-class model over predicts dominant class; binary model obscures spectrum of opinions 
+  * h01 likely taps into attitudes not captured elsewhere in dataset
+    * Responses may reflect latent variables
+  * Replacing using predicted values risks misrepresentation 
+    * Especially problematic in subgroup comparisons or longitudinal studies 
+
+```{r metric_comparison, echo=FALSE, include=TRUE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Create a data frame of performance metrics
+performance_table <- data.frame(
+  Model = c("Multi-class (RF)", "Binary (Logistic Regression)"),
+  Accuracy = c("~30%", "~50%"),
+  Precision = c("Low (esp. for minority classes)", "Moderate"),
+  F1_Score = c("~0.25", "~0.48"),
+  AUC = c("Not applicable", "~0.72")
+)
+
+# Display as a nice HTML/ioslides table
+kable(performance_table, format = "html", escape = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, position = "center", font_size = 16)
+
+print(performance_table)
+```
+
+## Conclusion
+  * Methodological choices principled but imperfect
+    * Simpler models prioritized interpretability and transparency
+    * LLMs and neural networks not explored due to interpretability trade offs
+    
+  * Prediction not a validated substitution for meaningful measurement
+    * Even food performance would not validate attitudinal questions without testing downstream effects
+    
+  * *Recommendation*: 
+
