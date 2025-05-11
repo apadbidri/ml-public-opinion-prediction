@@ -2,9 +2,10 @@
 title: 'MY474 Summative Assignment #2'
 author: '43182'
 date: "WT 2025"
-output: ioslides_presentation
+output: 
+  ioslides_presentation: 
+  smaller: true
 ---
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 ```
@@ -128,12 +129,14 @@ sum(sapply(data_cleaned, is.numeric))
 
 ```
 
-## Predicting Political Preference from Survey Data: 
-  * **Context:** Survey fatigure and low response rates worsening post-COVID
-    * Dropping low-value items could improve participation and data quality
-  * **Key Question:** *Can we predict certain preferences modelled using other survey responses*
-  * **Case Example:** h01 - environmental vs economy prioritisation from the BES 2019
-```{r h01_distribution, echo=FALSE, include=TRUE, warning=FALSE, fig.height=4, fig.width=7}
+## Survey Response Modelling
+  * **Context:** Post-COVID survey fatigue and low response rates
+    * Dropping low-value items may improve participation
+  * **Key Question:** *Can preferences be inferred from other responses?*
+  * **Case Example:** h01 - environment vs economy prioritization from BES 2019
+
+<div style="text-align: center;">
+```{r h01_distribution, echo=FALSE, warning=FALSE, fig.height=3, fig.width=7, out.height="30%", out.width="70%"}
 library(ggplot2)
 
 # Ensure h01 is a factor with ordered levels (optional but improves display)
@@ -141,7 +144,7 @@ data_cleaned$h01 <- factor(data_cleaned$h01, levels = sort(unique(data_cleaned$h
 
 # Create plot object
 p <- ggplot(data_cleaned_filtered, aes(x = h01)) +
-  geom_bar(fill = "darkslategray4", color = "white", linewidth = 1) +
+  geom_bar(fill = "darkslateblue", color = "white", linewidth = 1) +
   labs(
     title = "Class Distribution of H01 (Environment vs Economy)",
     x = "Preference (1 = Environment, 10 = Economy)",
@@ -160,8 +163,11 @@ p <- ggplot(data_cleaned_filtered, aes(x = h01)) +
 # Print it explicitly
 print(p)
 ```
+</div>
+
 
 ## Modelling Strategy
+* Flowchart of prediction approaches
 ```{r model_flowchart, echo=FALSE, include=TRUE}
 library(DiagrammeR)
 
@@ -174,18 +180,18 @@ digraph flowchart {
   A [label = 'Prediction model']
 
   # Multi-class path
-  node [shape = box, style = filled, fillcolor = lightblue, fontcolor = black]
+  node [shape = box, style = filled, fillcolor = lightyellow, fontcolor = black]
   B1 [label = 'Multi-class classification (11 levels)']
-  B2 [label = 'Lasso feature selection\n→ 105 features']
+  B2 [label = 'Lasso feature selection (105 features)']
   B3 [label = 'Random Forest with class weights +\nhyperparameter tuning']
-  B4 [label = 'Low accuracy (~30%)\nPoor prediction of minority preferences']
+  B4 [label = 'Accuracy: 0.27\nPrecision: 0.34\nF1-Score: 0.19']
 
   # Binary path
-  node [shape = box, style = filled, fillcolor = lightgreen, fontcolor = white]
+  node [shape = box, style = filled, fillcolor = lavender, fontcolor = black]
   C1 [label = 'Binary classification\n(Env: 1–5 vs Econ: 6–10)']
   C2 [label = 'SMOTE to balance classes']
   C3 [label = 'Logistic regression model']
-  C4 [label = 'Improved accuracy (~50%)\nStill moderate performance']
+  C4 [label = 'Accuracy: 0.59\nPrecision: 0.44\nF1-Score: 0.50']
 
   # Edges
   A -> B1
@@ -202,41 +208,20 @@ digraph flowchart {
 ```
 
 ## Model Performance Evaluation 
-  * Substantive nuance lost in both approaches 
-    * Multi-class model over predicts dominant class; binary model obscures spectrum of opinions 
-  * h01 likely taps into attitudes not captured elsewhere in dataset
-    * Responses may reflect latent variables
-  * Replacing using predicted values risks misrepresentation 
-    * Especially problematic in subgroup comparisons or longitudinal studies 
-
-```{r metric_comparison, echo=FALSE, include=TRUE, warning=FALSE}
-library(knitr)
-library(kableExtra)
-
-# Create a data frame of performance metrics
-performance_table <- data.frame(
-  Model = c("Multi-class (RF)", "Binary (Logistic Regression)"),
-  Accuracy = c("~30%", "~50%"),
-  Precision = c("Low (esp. for minority classes)", "Moderate"),
-  F1_Score = c("~0.25", "~0.48"),
-  AUC = c("Not applicable", "~0.72")
-)
-
-# Display as a nice HTML/ioslides table
-kable(performance_table, format = "html", escape = FALSE) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
-                full_width = F, position = "center", font_size = 16)
-
-print(performance_table)
-```
-
+  * Loss of nuance in both models
+    * Multi-class overpredicts dominant class; binary performs better but still oversimplifies spectrum 
+  * h01 likely reflects underlying attitudes not captured in other variables
+    * Responses may tap into latent variables
+  * Risks of using predicted values
+    * Misrepresentation for subgroup analysis and longitudinal studies
+    
 ## Conclusion
-  * Methodological choices principled but imperfect
-    * Simpler models prioritized interpretability and transparency
-    * LLMs and neural networks not explored due to interpretability trade offs
+  * Prediction cannot replace direct measurement
+    * Simplified models overlook nuanced preferences, particularly for minority groups
     
-  * Prediction not a validated substitution for meaningful measurement
-    * Even food performance would not validate attitudinal questions without testing downstream effects
+  * Modeling choices: transparency > complexity
+    * Prioritized interpretability over higher accuracy
+    * Complex models (LLMs, neural networks) excluded due to lack of transparency
     
-  * *Recommendation*: 
-
+  * **Recommendation**: Models should account for minority perspectives to ensure accurate representation
+    * Consider ensemble methods to improve accuracy for underrepresented groups

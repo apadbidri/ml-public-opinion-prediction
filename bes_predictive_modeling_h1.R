@@ -1,4 +1,4 @@
-# == Data Preprocessing ======
+# ==== Data Preprocessing ====
 library(haven)
 library(caret)
 library(dplyr)
@@ -96,7 +96,6 @@ cols_to_remove <- c("a01", "k04", "Constit_Code", "Constit_Name",
 data_cleaned <- data_cleaned %>%
   select(-all_of(cols_to_remove))
 
-
 # Check if there are any remaining missing values
 sum(is.na(data_cleaned))
 
@@ -114,8 +113,13 @@ sum(sapply(data_cleaned, is.numeric))
 
 
 
-# ====== New Pipeline ====
+
+
+
+# ==== Multi Classification Random Forest ====
 library(caret)
+library(yardstick)
+library(dplyr)
 set.seed(123)
 
 train_index <- createDataPartition(data_cleaned$h01, p = 0.8, list = FALSE)
@@ -159,181 +163,20 @@ rf_pred <- predict(rf_model, newdata = test_data_selected)
 # Evaluate model performance
 confusionMatrix(rf_pred, test_data_selected$h01)
 
-
-
-
-# ====
-# Install and load necessary packages
-library(caret)
-library(randomForest)
-
-# Manually define class weights (more weight to minority classes)
-class_weights <- c(1, 5, 3, 2, 1.5, 0.6, 1.2, 1, 0.9, 0.7, 0.8)
-
-# Set up a training control object (cross-validation with random search)
-train_control <- trainControl(method = "cv", number = 5, search = "random")
-
-# Set up a grid of hyperparameters to try (only mtry is required for randomForest)
-rf_grid <- expand.grid(
-  mtry = c(2, 5, 10, 15)  # Number of variables to sample at each split
+# Convert to tibble for yardstick
+results_df <- tibble(
+  truth = factor(y_true),
+  prediction = factor(y_pred, levels = levels(y_true))
 )
 
-# Train the Random Forest model with hyperparameter tuning
-rf_tuned <- train(h01 ~ ., data = train_data_selected, method = "rf",
-                  trControl = train_control, tuneGrid = rf_grid,
-                  classwt = class_weights)  # Using class weights
+# Compute metrics
+precision_macro <- precision(results_df, truth = truth, estimate = prediction, average = "macro")
+f1_macro <- f_meas(results_df, truth = truth, estimate = prediction, average = "macro")
 
-# View the tuning results
-print(rf_tuned)
-
-# Make predictions with the tuned model
-rf_pred_tuned <- predict(rf_tuned, newdata = test_data_selected)
-
-# Evaluate model performance
-confusionMatrix(rf_pred_tuned, test_data_selected$h01)
-
-
-
-
-
-
-
-# before new pipeline =======
-
-# If not installed yet
-install.packages("corrplot")
-
-# Load the package
-library(corrplot)
-
-# Calculate correlation matrix (only numeric columns)
-cor_matrix <- cor(data_cleaned[sapply(data_cleaned, is.numeric)], use = "pairwise.complete.obs")
-
-
-# Plot heatmap
-corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.7)
-
-# Save to a larger PNG file
-png("correlation_heatmap.png", width = 2000, height = 2000, res = 300)
-corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.3)  # Adjust label size
-dev.off()
-
-# == Model Training ==  
-set.seed(123)
-
-# Split data into training and testing sets
-train_index <- createDataPartition(data_cleaned$h01, p = 0.8, list = FALSE)
-train_data <- data_cleaned[train_index, ]
-test_data <- data_cleaned[-train_index, ]
-
-# === Apply SMOTE using smotefamily ===
-library(smotefamily)
-X_train <- train_data[, -which(names(train_data) == "h01")]
-y_train <- train_data$h01
-
-# Apply SMOTE to balance the classes in the training data
-smote_output <- SMOTE(X = X_train, target = y_train, K = 5, dup_size = 0)
-train_smote <- smote_output$data
-
-# Rename last column to "h01" and convert to factor
-names(train_smote)[ncol(train_smote)] <- "h01"
-train_smote$h01 <- as.factor(train_smote$h01)
-
-# === Train Random Forest on SMOTE-processed data ===
-library(randomForest)
-
-# Train the Random Forest model
-rf_model <- randomForest(h01 ~ ., data = train_smote, ntree = 500, mtry = 20, nodesize = 10)
-
-# === Predict using the trained model ===
-rf_predictions <- predict(rf_model, test_data)
-
-# === Evaluate performance ===
-library(caret)
-
-# Confusion Matrix
-conf_matrix <- confusionMatrix(rf_predictions, test_data$h01)
-print(conf_matrix)
-
-# === Accuracy ===
-accuracy <- sum(rf_predictions == test_data$h01) / length(test_data$h01)
-print(paste("Accuracy: ", accuracy))
-
-# === Precision, Recall, and F1 Score for each class ===
-# Calculate precision, recall, and F1 for each class using confusion matrix
-precision_all <- sapply(levels(test_data$h01), function(class) {
-  cm <- confusionMatrix(rf_predictions, test_data$h01)
-  cm$byClass[class, "Precision"]
-})
-
-recall_all <- sapply(levels(test_data$h01), function(class) {
-  cm <- confusionMatrix(rf_predictions, test_data$h01)
-  cm$byClass[class, "Recall"]
-})
-
-f1_all <- sapply(levels(test_data$h01), function(class) {
-  cm <- confusionMatrix(rf_predictions, test_data$h01)
-  cm$byClass[class, "F1"]
-})
-
-print("Precision for all classes:")
-print(precision_all)
-
-print("Recall for all classes:")
-print(recall_all)
-
-print("F1 Score for all classes:")
-print(f1_all)
-
-# === AUC (Area Under the ROC Curve) ===
-library(pROC)
-
-# For multi-class, we use the one-vs-all approach
-roc_curve <- multiclass.roc(test_data$h01, as.numeric(rf_predictions))
-auc_value <- auc(roc_curve)
-print(paste("AUC (macro-average):", auc_value))
-
-# === Accuracy ===
-accuracy <- sum(rf_predictions == test_data$h01) / length(test_data$h01)
-print(paste("Accuracy: ", accuracy))
-
-# === Precision, Recall, and F1 Score for each class ===
-# Calculate precision, recall, and F1 for each class using confusion matrix
-precision_all <- sapply(levels(test_data$h01), function(class) {
-  cm <- confusionMatrix(rf_predictions, test_data$h01)
-  cm$byClass[class, "Precision"]
-})
-
-recall_all <- sapply(levels(test_data$h01), function(class) {
-  cm <- confusionMatrix(rf_predictions, test_data$h01)
-  cm$byClass[class, "Recall"]
-})
-
-f1_all <- sapply(levels(test_data$h01), function(class) {
-  cm <- confusionMatrix(rf_predictions, test_data$h01)
-  cm$byClass[class, "F1"]
-})
-
-print("Precision for all classes:")
-print(precision_all)
-
-print("Recall for all classes:")
-print(recall_all)
-
-print("F1 Score for all classes:")
-print(f1_all)
-
-# === AUC (Area Under the ROC Curve) ===
-library(pROC)
-
-# For multi-class, we use the one-vs-all approach
-roc_curve <- multiclass.roc(test_data$h01, as.numeric(rf_predictions))
-auc_value <- auc(roc_curve)
-print(paste("AUC (macro-average):", auc_value))
-
-
-
-# ==== 
+# Display results
+cat("Macro Precision:", round(precision_macro$.estimate, 3), "\n")
+cat("Macro F1 Score:", round(f1_macro$.estimate, 3), "\n")
+# ==== Binary Logistic Regression ====
 # Convert h01 to numeric (if it's a factor)
 data_cleaned$h01_numeric <- as.numeric(as.character(data_cleaned$h01))
 
@@ -400,57 +243,9 @@ print(paste("AUC (Logistic Regression):", auc_log_reg))
 # Precision, Recall, and F1 score
 precision_log_reg <- posPredValue(factor(log_reg_preds_class), factor(test_data$h01_binary))
 recall_log_reg <- sensitivity(factor(log_reg_preds_class), factor(test_data$h01_binary))
-f1_log_reg <- F1_Score(factor(log_reg_preds_class), factor(test_data$h01_binary))
 
 print(paste("Precision (Logistic Regression):", precision_log_reg))
-print(paste("Recall (Logistic Regression):", recall_log_reg))
 
 # Calculate F1 score manually
 f1_log_reg <- 2 * (precision_log_reg * recall_log_reg) / (precision_log_reg + recall_log_reg)
 print(paste("F1 Score (Logistic Regression):", f1_log_reg))
-
-
-# Train Random Forest model
-library(randomForest)
-
-# Ensure the target variable is a factor
-train_smote$target <- as.factor(train_smote$target)
-
-# Train Random Forest model
-rf_model <- randomForest(target ~ ., data = train_smote, ntree = 500, mtry = 20, nodesize = 10)
-
-# Make predictions on the test data
-rf_preds <- predict(rf_model, newdata = test_data)
-
-# Convert predictions to binary outcomes
-rf_preds_class <- as.factor(ifelse(rf_preds > 0.5, 1, 0))
-
-# Evaluate performance using confusion matrix
-library(caret)
-
-conf_matrix_rf <- confusionMatrix(rf_preds_class, factor(test_data$h01_binary))
-print(conf_matrix_rf)
-
-# Accuracy
-accuracy_rf <- sum(rf_preds_class == factor(test_data$h01_binary)) / length(test_data$h01_binary)
-print(paste("Accuracy (Random Forest):", accuracy_rf))
-
-# AUC (Area Under the Curve)
-library(pROC)
-roc_curve_rf <- roc(test_data$h01_binary, as.numeric(rf_preds))
-auc_rf <- auc(roc_curve_rf)
-print(paste("AUC (Random Forest):", auc_rf))
-
-# Precision, Recall, and F1 score using confusion matrix
-precision_rf <- conf_matrix_rf$byClass["Precision"]
-recall_rf <- conf_matrix_rf$byClass["Recall"]
-
-# Calculate F1 score manually for Random Forest
-f1_rf <- 2 * (precision_rf * recall_rf) / (precision_rf + recall_rf)
-
-# Print the results
-print(paste("Precision (Random Forest):", precision_rf))
-print(paste("Recall (Random Forest):", recall_rf))
-print(paste("F1 Score (Random Forest):", f1_rf))
-
-
